@@ -9,7 +9,7 @@ const SERVER_URL_ID: BleUuid = uuid128!("cef520a9-bcb5-4fc6-87f7-82804eee2b20");
 const BACKGROUND_GIF_ID: BleUuid = uuid128!("d1f3b2c4-5e6f-4a7b-8c9d-0e1f2a3b4c5d");
 
 pub fn bt(
-    setting: Arc<Mutex<(super::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
+    setting: Arc<Mutex<(crate::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
 ) -> anyhow::Result<()> {
     let ble_device = esp32_nimble::BLEDevice::take();
     let ble_addr = ble_device.get_addr()?.to_string();

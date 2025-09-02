@@ -1,23 +1,15 @@
 use std::sync::{Arc, Mutex};
 
+use echokit::app;
+use echokit::audio;
+use echokit::bt;
+use echokit::hal;
+use echokit::network;
+use echokit::protocol;
+use echokit::ui;
+use echokit::ws;
+use echokit::Setting;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
-
-mod app;
-mod audio;
-mod bt;
-mod hal;
-mod network;
-mod protocol;
-mod ui;
-mod ws;
-
-#[derive(Debug, Clone)]
-struct Setting {
-    ssid: String,
-    pass: String,
-    server_url: String,
-    background_gif: (Vec<u8>, bool), // (data, ended)
-}
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();

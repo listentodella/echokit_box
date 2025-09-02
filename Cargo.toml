@@ -10,6 +10,9 @@ rust-version = "1.77"
 name = "echokit"
 harness = false             # do not use the built in cargo test harness -> resolve rust-analyzer errors
 
+[lib]
+path = "src/lib.rs"
+
 [profile.release]
 opt-level = "s"
 
