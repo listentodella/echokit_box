@@ -5,7 +5,7 @@ use echokit::audio;
 use echokit::bt;
 use echokit::hal;
 use echokit::network;
-use echokit::protocol;
+// use echokit::protocol;
 use echokit::ui;
 use echokit::ws;
 use echokit::Setting;
@@ -131,11 +131,33 @@ fn main() -> anyhow::Result<()> {
             if setting.0.background_gif.1 {
                 gui.text = "Testing background GIF...".to_string();
                 gui.display_flush().unwrap();
-
                 // 先创建一个新的gif vec
                 let mut new_gif = Vec::new();
                 // 然后从 settings 里取出背景图到 vec 里
                 std::mem::swap(&mut setting.0.background_gif.0, &mut new_gif);
+                // 然后设置背景图到 UI
+                let _ = ui::backgroud(&new_gif);
+                log::info!("Background GIF set from NVS");
+                // 刷新 framebuffer
+                gui.text = "Background GIF set OK".to_string();
+                gui.display_flush().unwrap();
+                // 如果确实有背景图, 那么将它写入到 flash 中
+                if !new_gif.is_empty() {
+                    setting
+                        .1
+                        .set_blob("background_gif", &new_gif)
+                        .map_err(|e| log::error!("Failed to save background GIF to NVS: {:?}", e))
+                        .unwrap();
+                    log::info!("Background GIF saved to NVS");
+                }
+            } else {
+                gui.text = "Testing background GIF...".to_string();
+                gui.display_flush().unwrap();
+                let mut default_gif = include_bytes!("../assets/android-logo.gif").to_vec();
+                // 先创建一个新的gif vec
+                let mut new_gif = Vec::new();
+                // 然后从 settings 里取出背景图到 vec 里
+                std::mem::swap(&mut default_gif, &mut new_gif);
                 // 然后设置背景图到 UI
                 let _ = ui::backgroud(&new_gif);
                 log::info!("Background GIF set from NVS");
@@ -216,7 +238,7 @@ fn main() -> anyhow::Result<()> {
         let ws = peripherals.pins.gpio4;
         let bclk = peripherals.pins.gpio15;
         let lrclk = peripherals.pins.gpio16;
-
+        // 创建i2s task, 用于接收音频,处理音频(数据和vad检测), 播放音频
         audio::i2s_task_(
             peripherals.i2s0,
             ws.into(),
@@ -252,7 +274,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let server = server.unwrap();
-
+    // 注意这里main_work是async的, 因此ws_task只是一个future, 等到await的时候才会真正运行
     let ws_task = app::main_work(server, tx1, evt_rx, background_gif);
 
     b.spawn(async move {
@@ -292,8 +314,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
     });
-
+    // 启动 i2s_task
     b.spawn(i2s_task);
+    // 启动 ws_task
     b.block_on(async move {
         let r = ws_task.await;
         if let Err(e) = r {

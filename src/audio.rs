@@ -83,7 +83,7 @@ impl AFE {
             (afe_handle.as_ref().unwrap().reset_vad.unwrap())(afe_data);
         }
     }
-
+    // 通过ffi操作, 向afe输入音频数据
     fn feed(&self, data: &[u8]) -> i32 {
         let afe_handle = self.handle;
         let afe_data = self.data;
@@ -91,11 +91,16 @@ impl AFE {
             (afe_handle.as_ref().unwrap().feed.unwrap())(afe_data, data.as_ptr() as *const i16)
         }
     }
-
+    // 这里主要是ffi操作
     fn fetch(&self) -> Result<AFEResult, i32> {
+        // 先取出AFE的handle和data指针
         let afe_handle = self.handle;
         let afe_data = self.data;
         unsafe {
+            // 先从handle里判断fetch是否存在, 它其实是一个C函数指针
+            // 如果存在, 则调用fetch函数, 并将 afe_data 作为参数传入
+            // 然后取出返回值, 它是一个指向 esp_afe_sr_fetch_result_t 结构体的指针
+            // 再将其转换为可变引用
             let result = (afe_handle.as_ref().unwrap().fetch.unwrap())(afe_data)
                 .as_mut()
                 .unwrap();
@@ -103,22 +108,26 @@ impl AFE {
             if result.ret_value != 0 {
                 return Err(result.ret_value);
             }
-
+            // 取出数据大小和vad状态
             let data_size = result.data_size;
             let vad_state = result.vad_state;
+            // 根据数据大小和vad缓存大小, 创建一个足够大的Vec
             let mut data = Vec::with_capacity(data_size as usize + result.vad_cache_size as usize);
+            // 如果vad缓存大小大于0, 则取出vad缓存数据, 并追加到Vec中
             if result.vad_cache_size > 0 {
                 let data_ptr = result.vad_cache as *const u8;
                 let data_ = std::slice::from_raw_parts(data_ptr, (result.vad_cache_size) as usize);
                 data.extend_from_slice(data_);
             }
+            // 如果数据大小大于0, 则取出数据, 并追加到Vec中
             if data_size > 0 {
                 let data_ptr = result.data as *const u8;
                 let data_ = std::slice::from_raw_parts(data_ptr, (data_size) as usize);
                 data.extend_from_slice(data_);
             };
-
+            // 判断vad状态是否为语音中
             let speech = vad_state == esp_sr::vad_state_t_VAD_SPEECH;
+            // 返回数据和vad状态
             Ok(AFEResult { data, speech })
         }
     }
@@ -151,9 +160,13 @@ pub async fn i2s_task_(
     dout: AnyIOPin,
     (tx, rx): (MicTx, PlayerRx),
 ) {
+    // 使用arc封装AFE数据结构(通过ffi)
     let afe_handle = Arc::new(AFE::new());
+    // clone 一个供线程使用
     let afe_handle_ = afe_handle.clone();
+    // 启动一个线程, 该线程负责接收处理过的语音数据和vad状态, 并通过channel发送出去
     let afe_r = std::thread::spawn(|| afe_worker(afe_handle_, tx));
+    // i2s player也是一个死循环, 通过i2s采集音频数据, 并喂给AFE处理, 并接收AFE的处理结果
     let r = i2s_player_(i2s, ws, sck, din, i2s1, bclk, lrclk, dout, afe_handle, rx).await;
     if let Err(e) = r {
         log::error!("Error: {}", e);
@@ -189,7 +202,7 @@ async fn i2s_player_(
         ),
         config::StdGpioConfig::default(),
     );
-
+    // 创建i2s RX TX
     let mclk: Option<esp_idf_svc::hal::gpio::AnyIOPin> = None;
     let mut rx_driver = I2sDriver::new_std_rx(i2s, &i2s_config, sck, din, mclk, ws).unwrap();
     rx_driver.rx_enable()?;
@@ -198,24 +211,27 @@ async fn i2s_player_(
     let mut tx_driver = I2sDriver::new_std_tx(i2s1, &i2s_config, bclk, dout, mclk, lrclk).unwrap();
     tx_driver.tx_enable()?;
 
-    // 10ms
+    // 10ms 的buffer
     let mut buf = [0u8; 2 * 160];
     let mut speaking = false;
-
+    // 播放hello音效
     let mut hello_audio = WAKE_WAV.to_vec();
-
     tx_driver.write_all(&hello_audio, 100 / PORT_TICK_PERIOD_MS)?;
     log::info!("Playing hello audio, waiting for response...");
-
+    // 创建一个死循环
     loop {
+        // 如果监测到speaking
         let data = if speaking {
+            // 直接通过 rx channel 提取数据
             rx.recv().await
         } else {
+            // 否则通过 select!
             tokio::select! {
-                Some(data) = rx.recv() =>{
-                    Some(data)
+                Some(data) = rx.recv() =>{  // 通过 rx channel 接收数据
+                    Some(data) // 将数据返回给data
                 }
                 _ = async {} => {
+                    // 否则通过 i2s 读取数据, 并将数据喂给afe
                     for _ in 0..10{
                         let n = rx_driver.read(&mut buf, 100 / PORT_TICK_PERIOD_MS)?;
                         afe_handle.feed(&buf[..n]);
@@ -224,49 +240,61 @@ async fn i2s_player_(
                 }
             }
         };
+        // 如果本轮循环接收到数据, 则进行处理
+        // 否则小睡一下进入下一轮循环
         if let Some(data) = data {
             match data {
+                // 如果是Hello
                 AudioData::Hello(tx) => {
                     log::info!("Received hello");
+                    // 通过 i2s 播放 hello 音效
                     tx_driver
                         .write_all_async(&hello_audio)
                         .await
                         .map_err(|e| anyhow::anyhow!("Error play hello: {:?}", e))?;
+                    // 通过 tx channel 通知播放完成
                     let _ = tx.send(()); //使用提供的 tx 进行 ack
-                    speaking = false;
+                    speaking = false; // 更新no speaking
                 }
+                // 如果是设置hello音效
                 AudioData::SetHelloStart => {
                     log::info!("Received set hello start");
-                    hello_audio.clear();
+                    hello_audio.clear(); // 清空hello音效
                 }
                 AudioData::SetHelloChunk(data) => {
                     log::info!("Received set hello chunk");
-                    hello_audio.extend(data);
+                    hello_audio.extend(data); // 追加音频数据
                 }
                 AudioData::SetHelloEnd => {
                     log::info!("Received set hello end");
+                    // 通过 i2s 播放 hello 音效
                     tx_driver
                         .write_all_async(&hello_audio)
                         .await
                         .map_err(|e| anyhow::anyhow!("Error play set hello: {:?}", e))?;
                 }
+                // 如果是开始(接收语音)
                 AudioData::Start => {
                     log::info!("Received start");
-                    speaking = true;
+                    speaking = true; // 更新speaking
                 }
+                // 如果是语音数据(段)
                 AudioData::Chunk(data) => {
                     log::info!("Received audio chunk");
+                    // 如果当前是speaking状态
                     if speaking {
+                        // 通过i2s播放语音数据
                         tx_driver
                             .write_all_async(&data)
                             .await
                             .map_err(|e| anyhow::anyhow!("Error play audio data: {:?}", e))?;
                     }
                 }
+                // 如果是结束(接收完毕)
                 AudioData::End(tx) => {
                     log::info!("Received end");
                     let _ = tx.send(()); //ack play done
-                    speaking = false;
+                    speaking = false; // 更新no speaking
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
             }
@@ -410,29 +438,37 @@ async fn i2s_player(
 
 fn afe_worker(afe_handle: Arc<AFE>, tx: MicTx) -> anyhow::Result<()> {
     let mut speech = false;
+    // 死循环
     loop {
+        // 通过fetch获取本轮语音的数据和vad状态
         let result = afe_handle.fetch();
         if let Err(_e) = &result {
             continue;
         }
         let result = result.unwrap();
+        // 如果没有数据, 则继续下一轮fetch
         if result.data.is_empty() {
             continue;
         }
-
+        // 运行到这里, 首先可以说明, 有语音数据
+        // 然后, 如果vad状态为true, 则说明语音仍然在进行
+        // 先将已采集到的数据通过channel发送出去
+        // 然后进行下一轮fetch
         if result.speech {
-            speech = true;
+            speech = true; //更新flag
             log::debug!("Speech detected, sending {} bytes", result.data.len());
             tx.blocking_send(crate::app::Event::MicAudioChunk(result.data))
                 .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
             continue;
         }
-
+        // 如果运行到这里, 首先可以说明, 本次采集的vad状态为false, 但有语音数据
+        // 则可以说明是本次语音的结束段
+        // 本次fetch里的语音数据没有意义? 但起码将结束状态先发送出去
         if speech {
             log::info!("Speech ended");
             tx.blocking_send(crate::app::Event::MicAudioEnd)
                 .map_err(|_| anyhow::anyhow!("Failed to send data"))?;
-            speech = false;
+            speech = false; //更新flag
         }
     }
 }
