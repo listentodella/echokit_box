@@ -11,11 +11,12 @@ const BACKGROUND_GIF_ID: BleUuid = uuid128!("d1f3b2c4-5e6f-4a7b-8c9d-0e1f2a3b4c5
 pub fn bt(
     setting: Arc<Mutex<(crate::Setting, esp_idf_svc::nvs::EspDefaultNvs)>>,
 ) -> anyhow::Result<()> {
+    // 获取 ble 设备
     let ble_device = esp32_nimble::BLEDevice::take();
     let ble_addr = ble_device.get_addr()?.to_string();
     let ble_advertising = ble_device.get_advertising();
-
     let server = ble_device.get_server();
+    // 配置 server, on_connect 时的 callback
     server.on_connect(|server, desc| {
         log::info!("Client connected: {:?}", desc);
 
@@ -28,26 +29,28 @@ pub fn bt(
             ble_advertising.lock().start().unwrap();
         }
     });
-
+    // 配置 server, on_disconnect 时的 callback
     server.on_disconnect(|_desc, reason| {
         log::info!("Client disconnected ({:?})", reason);
     });
-
+    //  从 server 创建 service
     let service = server.create_service(SERVICE_ID);
-
     let setting1 = setting.clone();
     let setting2 = setting.clone();
-
+    // 从 service 创建 characteristic, 支持读写(收发) wifi SSID
     let ssid_characteristic = service
         .lock()
         .create_characteristic(SSID_ID, NimbleProperties::READ | NimbleProperties::WRITE);
+    // 设置 characteristic
     ssid_characteristic
         .lock()
+        // on_read 时的 callback
         .on_read(move |c, _| {
             log::info!("Read from SSID characteristic");
             let setting = setting1.lock().unwrap();
             c.set_value(setting.0.ssid.as_bytes());
         })
+        // on_write 时的 callback
         .on_write(move |args| {
             log::info!(
                 "Wrote to SSID characteristic: {:?} -> {:?}",
@@ -66,7 +69,7 @@ pub fn bt(
                 log::error!("Failed to parse new SSID from bytes.");
             }
         });
-
+    // 从 service 创建 characteristic, 支持读写(收发) wifi PASSWD
     let setting1 = setting.clone();
     let setting2 = setting.clone();
     let pass_characteristic = service
@@ -101,7 +104,7 @@ pub fn bt(
     let setting = setting.clone();
     let setting_ = setting.clone();
     let setting_gif = setting.clone();
-
+    // 从 service 创建 characteristic, 支持读写(收发) server URL
     let server_url_characteristic = service.lock().create_characteristic(
         SERVER_URL_ID,
         NimbleProperties::READ | NimbleProperties::WRITE,
@@ -134,7 +137,7 @@ pub fn bt(
                 log::error!("Failed to parse new server URL from bytes.");
             }
         });
-
+    // 从 service 创建 characteristic, 支持读(收) background GIF
     let background_gif_characteristic = service
         .lock()
         .create_characteristic(BACKGROUND_GIF_ID, NimbleProperties::WRITE);
@@ -143,7 +146,11 @@ pub fn bt(
 
         if gif_chunk.len() <= 1024 * 1024 && gif_chunk.len() > 0 {
             log::info!("New background GIF received, size: {}", gif_chunk.len());
+            // 取出 settings
             let mut setting = setting_gif.lock().unwrap();
+            // settings.gif 使用 extend 追加数据
+            // 因为数据比较大, 可能会分多次接收
+            // 需要注意的是, 这里只是接收数据到变量中, 并不像上面的 ssid, pass 那样, 直接写入到 nvs
             setting.0.background_gif.0.extend_from_slice(gif_chunk);
             if gif_chunk.len() < 512 {
                 setting.0.background_gif.1 = true; // Mark as valid
@@ -152,7 +159,7 @@ pub fn bt(
             log::error!("Failed to parse new background GIF from bytes.");
         }
     });
-
+    // 发布广播, 供客户端发现
     ble_advertising.lock().set_data(
         BLEAdvertisementData::new()
             .name(&format!("EchoKit-{}", ble_addr))

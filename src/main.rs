@@ -76,9 +76,9 @@ fn main() -> anyhow::Result<()> {
     let b = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-
+    // 创建 UI
     let mut gui = ui::UI::new(None).unwrap();
-
+    // 创建 settings 变量
     let setting = Arc::new(Mutex::new((
         Setting {
             ssid: ssid.unwrap_or_default().to_string(),
@@ -98,10 +98,12 @@ fn main() -> anyhow::Result<()> {
             || setting.0.server_url.is_empty()
             || button.is_low()
     };
+    // 如果开机时, 检测到 settings 里有任意条件满足
+    // 则进入初始化等待
     if need_init {
         bt::bt(setting.clone()).unwrap();
         log_heap();
-
+        // 更新 framebuffer
         gui.state = "Please setup device by bt".to_string();
         gui.text = "Goto https://echokit.dev/setup/ to set up the device.\nPress K0 to continue"
             .to_string();
@@ -112,6 +114,7 @@ fn main() -> anyhow::Result<()> {
             let dout = peripherals.pins.gpio7;
             let bclk = peripherals.pins.gpio15;
             let lrclk = peripherals.pins.gpio16;
+            // 播放欢迎语音
             audio::player_welcome(
                 peripherals.i2s0,
                 bclk.into(),
@@ -121,7 +124,7 @@ fn main() -> anyhow::Result<()> {
                 None,
             );
         }
-
+        // 等待 K0(BOOT) 按键按下
         b.block_on(button.wait_for_falling_edge()).unwrap();
         {
             let mut setting = setting.lock().unwrap();
@@ -129,15 +132,17 @@ fn main() -> anyhow::Result<()> {
                 gui.text = "Testing background GIF...".to_string();
                 gui.display_flush().unwrap();
 
+                // 先创建一个新的gif vec
                 let mut new_gif = Vec::new();
+                // 然后从 settings 里取出背景图到 vec 里
                 std::mem::swap(&mut setting.0.background_gif.0, &mut new_gif);
-
+                // 然后设置背景图到 UI
                 let _ = ui::backgroud(&new_gif);
                 log::info!("Background GIF set from NVS");
-
+                // 刷新 framebuffer
                 gui.text = "Background GIF set OK".to_string();
                 gui.display_flush().unwrap();
-
+                // 如果确实有背景图, 那么将它写入到 flash 中
                 if !new_gif.is_empty() {
                     setting
                         .1
@@ -148,7 +153,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-
+        // 主动重启
         unsafe { esp_idf_svc::sys::esp_restart() }
     }
 

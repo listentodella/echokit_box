@@ -133,7 +133,7 @@ fn get_esp_lcd_panel_handle() -> esp_idf_svc::sys::esp_lcd_panel_handle_t {
         std::mem::transmute(esp_idf_svc::sys::hal_driver::panel_handle)
     }
 }
-
+// 通过 C ffi, 将指定&[u8] 刷新到指定坐标域区
 pub fn flush_display(color_data: &[u8], x_start: i32, y_start: i32, x_end: i32, y_end: i32) -> i32 {
     unsafe {
         let e = esp_idf_svc::sys::esp_lcd_panel_draw_bitmap(
@@ -294,6 +294,7 @@ fn alpha_mix(source: ColorFormat, target: ColorFormat, alpha: f32) -> ColorForma
 }
 
 fn flush_area<const COLOR_WIDTH: u32>(data: &[u8], size: Size, area: Rectangle) -> i32 {
+    // 从 area 矩形区域提取出起始的 y 坐标
     let start_y = area.top_left.y as u32;
     let end_y = start_y + area.size.height;
 
@@ -372,26 +373,31 @@ impl qrcode::render::Canvas for QrCanvas {
 
 impl UI {
     pub fn new(backgroud_gif: Option<&[u8]>) -> anyhow::Result<Self> {
+        // 创建 embedded_graphics 的 framebuffer
         let mut display = Box::new(Framebuffer::<
-            ColorFormat,
+            ColorFormat, //rgb565
             _,
             LittleEndian,
             DISPLAY_WIDTH,
             DISPLAY_HEIGHT,
             { buffer_size::<ColorFormat>(DISPLAY_WIDTH, DISPLAY_HEIGHT) },
         >::new());
-
+        // 以白色填充
         display.clear(ColorFormat::WHITE).unwrap();
-
+        // 从左上角的坐标开始, 绘制一个矩形, 宽度为 DISPLAY_WIDTH, 高度为 32
+        // 用于表示状态区域
         let state_area = Rectangle::new(
             display.bounding_box().top_left + Point::new(0, 0),
             Size::new(DISPLAY_WIDTH as u32, 32),
         );
+        // 在状态区域紧接着的位置, 绘制一个矩形, 宽度为 DISPLAY_WIDTH, 高度为 DISPLAY_HEIGHT - 32
+        // 用于表示文本区域
         let text_area = Rectangle::new(
             display.bounding_box().top_left + Point::new(0, 32),
             Size::new(DISPLAY_WIDTH as u32, DISPLAY_HEIGHT as u32 - 32),
         );
-
+        // 如果有背景图, 则绘制背景图
+        // 方法是将背景图的 raw data, 通过 tinygif 解析, 然后绘制到 framebuffer(即 display 变量) 中
         if let Some(gif) = backgroud_gif {
             let image = tinygif::Gif::<ColorFormat>::from_slice(gif)
                 .map_err(|e| anyhow::anyhow!("Failed to parse GIF: {:?}", e))?;
@@ -399,9 +405,9 @@ impl UI {
                 frame.draw(display.as_mut()).unwrap();
             }
         }
-
+        // 将 framebuffer 转换为 ImageRaw 类型
         let img = display.as_image();
-
+        // 将状态区域转换为Vec<Pixel<ColorFormat>>
         let state_pixels: Vec<Pixel<ColorFormat>> = state_area
             .into_styled(
                 PrimitiveStyleBuilder::new()
@@ -410,8 +416,9 @@ impl UI {
                     .fill_color(ColorFormat::CSS_DARK_BLUE)
                     .build(),
             )
-            .pixels()
+            .pixels() // 状态区域的pixel iter
             .map(|p| {
+                // 遍历状态区域的每个 pixel, 混入透明度?
                 if let Some(color) = img.pixel(p.0) {
                     Pixel(p.0, alpha_mix(color, p.1, ALPHA))
                 } else {
@@ -419,7 +426,7 @@ impl UI {
                 }
             })
             .collect();
-
+        // 将文本区域转换为Vec<Pixel<ColorFormat>>
         let box_pixels: Vec<Pixel<ColorFormat>> = text_area
             .into_styled(
                 PrimitiveStyleBuilder::new()
@@ -437,7 +444,7 @@ impl UI {
                 }
             })
             .collect();
-
+        // 将上述的数据结构, 填充到 UI 数据结构中, 然后返回
         Ok(Self {
             state: String::new(),
             state_background: state_pixels,
