@@ -186,8 +186,9 @@ fn main() -> anyhow::Result<()> {
         "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
-
+    // 用于收发 event 事件
     let (evt_tx, evt_rx) = tokio::sync::mpsc::channel(64);
+    // 用于收发 audio 数据
     let (tx1, rx1) = tokio::sync::mpsc::unbounded_channel();
 
     #[cfg(feature = "box")]
@@ -239,7 +240,9 @@ fn main() -> anyhow::Result<()> {
         let setting = setting.lock().unwrap();
         format!("{}{}", setting.0.server_url, mac_str)
     };
+    // 通过 ws 连接配置好的url指向的 server
     let server = b.block_on(ws::Server::new(server_url.clone()));
+    // 如果连接 server 失败, 则等待按键触发重启
     if server.is_err() {
         gui.state = "Failed to connect to server".to_string();
         gui.text = format!("Please check your server URL: {server_url}");
@@ -254,9 +257,10 @@ fn main() -> anyhow::Result<()> {
 
     b.spawn(async move {
         loop {
+            // 当检测按键按下后
             let _ = button.wait_for_falling_edge().await;
             log::info!("Button k0 pressed {:?}", button.get_level());
-
+            // 启动 tokio 定时器, 如果在 1s 内没有按键松开, 则返回Err
             let r = tokio::time::timeout(
                 std::time::Duration::from_secs(1),
                 button.wait_for_rising_edge(),
@@ -264,6 +268,7 @@ fn main() -> anyhow::Result<()> {
             .await;
             match r {
                 Ok(_) => {
+                    // 如果检测到按键松开, 发送K0 event
                     if evt_tx
                         .send(app::Event::Event(app::Event::K0))
                         .await
@@ -274,6 +279,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 Err(_) => {
+                    // 如果检测到按键松开, 发送K0_ event
                     if evt_tx
                         .send(app::Event::Event(app::Event::K0_))
                         .await

@@ -16,6 +16,7 @@ pub struct Server {
 }
 
 impl Server {
+    // 基于tokio websocket创建一个 server 连接
     pub async fn new(uri: String) -> anyhow::Result<Self> {
         let (ws, _resp) = tokio_websockets::ClientBuilder::new()
             .uri(&uri)?
@@ -30,14 +31,14 @@ impl Server {
     pub fn set_timeout(&mut self, timeout: std::time::Duration) {
         self.timeout = timeout;
     }
-
+    // 用于向 server 发送 msg
     pub async fn send(&mut self, msg: Message) -> anyhow::Result<()> {
         tokio::time::timeout(self.timeout, self.ws.send(msg))
             .map_err(|_| anyhow::anyhow!("Timeout sending message"))
             .await??;
         Ok(())
     }
-
+    // 用于接收 server 的事件
     pub async fn recv(&mut self) -> anyhow::Result<Event> {
         let msg = self
             .ws

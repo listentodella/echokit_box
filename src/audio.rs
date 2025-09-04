@@ -232,7 +232,7 @@ async fn i2s_player_(
                         .write_all_async(&hello_audio)
                         .await
                         .map_err(|e| anyhow::anyhow!("Error play hello: {:?}", e))?;
-                    let _ = tx.send(());
+                    let _ = tx.send(()); //使用提供的 tx 进行 ack
                     speaking = false;
                 }
                 AudioData::SetHelloStart => {
@@ -265,7 +265,7 @@ async fn i2s_player_(
                 }
                 AudioData::End(tx) => {
                     log::info!("Received end");
-                    let _ = tx.send(());
+                    let _ = tx.send(()); //ack play done
                     speaking = false;
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 }
