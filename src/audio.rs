@@ -25,7 +25,16 @@ unsafe fn afe_init() -> (
     afe_config.pcm_config.ref_num = 0;
     afe_config.pcm_config.sample_rate = 16000;
     afe_config.afe_ringbuf_size = 25;
+
+    afe_config.vad_init = true;
+    // 噪声/静音段的最短持续时间（毫秒）
+    afe_config.vad_min_noise_ms = 1000;
+    // VAD首帧触发到语音首帧数据的延迟量
+    afe_config.vad_delay_ms = 128;
+    //防误触机制：需持续触发时间达到配置参数vad_min_speech_ms 才会正式触发
+    // 语音段的最短持续时间（毫秒）
     afe_config.vad_min_noise_ms = 500;
+    // 模式值越大，语音触发概率越高
     afe_config.vad_mode = esp_sr::vad_mode_t_VAD_MODE_1;
     afe_config.agc_init = true;
 
@@ -44,7 +53,7 @@ unsafe fn afe_init() -> (
     (afe_handle, afe_data)
 }
 
-struct AFE {
+pub struct AFE {
     handle: *mut esp_sr::esp_afe_sr_iface_t,
     data: *mut esp_sr::esp_afe_sr_data_t,
     #[allow(unused)]
@@ -54,13 +63,13 @@ struct AFE {
 unsafe impl Send for AFE {}
 unsafe impl Sync for AFE {}
 
-struct AFEResult {
-    data: Vec<u8>,
-    speech: bool,
+pub struct AFEResult {
+    pub data: Vec<u8>,
+    pub speech: bool,
 }
 
 impl AFE {
-    fn new() -> Self {
+    pub fn new() -> Self {
         unsafe {
             let (handle, data) = afe_init();
             let feed_chunksize =
@@ -75,16 +84,38 @@ impl AFE {
     }
     // returns the number of bytes fed
 
+    // 禁用AFE的vad状态
     #[allow(dead_code)]
-    fn reset(&self) {
+    pub fn disable_vad(&self) {
+        let afe_handle = self.handle;
+        let afe_data = self.data;
+        unsafe {
+            (afe_handle.as_ref().unwrap().disable_vad.unwrap())(afe_data);
+        }
+    }
+
+    // 启用AFE的vad状态
+    #[allow(dead_code)]
+    pub fn enable_vad(&self) {
+        let afe_handle = self.handle;
+        let afe_data = self.data;
+        unsafe {
+            (afe_handle.as_ref().unwrap().enable_vad.unwrap())(afe_data);
+        }
+    }
+
+    // 重置AFE的vad状态
+    #[allow(dead_code)]
+    pub fn reset(&self) {
         let afe_handle = self.handle;
         let afe_data = self.data;
         unsafe {
             (afe_handle.as_ref().unwrap().reset_vad.unwrap())(afe_data);
         }
     }
+
     // 通过ffi操作, 向afe输入音频数据
-    fn feed(&self, data: &[u8]) -> i32 {
+    pub fn feed(&self, data: &[u8]) -> i32 {
         let afe_handle = self.handle;
         let afe_data = self.data;
         unsafe {
@@ -92,7 +123,7 @@ impl AFE {
         }
     }
     // 这里主要是ffi操作
-    fn fetch(&self) -> Result<AFEResult, i32> {
+    pub fn fetch(&self) -> Result<AFEResult, i32> {
         // 先取出AFE的handle和data指针
         let afe_handle = self.handle;
         let afe_data = self.data;
@@ -114,6 +145,9 @@ impl AFE {
             // 根据数据大小和vad缓存大小, 创建一个足够大的Vec
             let mut data = Vec::with_capacity(data_size as usize + result.vad_cache_size as usize);
             // 如果vad缓存大小大于0, 则取出vad缓存数据, 并追加到Vec中
+            // - VAD算法固有延迟：VAD无法在首帧精准触发，可能有1-3帧延迟
+            // - 防误触机制：需持续触发时间达到配置参数`vad_min_speech_ms`才会正式触发
+            // 为避免上述原因导致语音首字截断，AFE V2.0新增了VAD缓存机制
             if result.vad_cache_size > 0 {
                 let data_ptr = result.vad_cache as *const u8;
                 let data_ = std::slice::from_raw_parts(data_ptr, (result.vad_cache_size) as usize);

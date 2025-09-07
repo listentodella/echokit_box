@@ -20,10 +20,11 @@ pub fn wifi(
         auth_method = AuthMethod::None;
         info!("Wifi password is empty");
     }
+    // 建立esp wifi
     let mut esp_wifi = EspWifi::new(modem, sysloop.clone(), None)?;
-
+    // 封装进 blocking wifi, 注意这里只是可变引用, 并没有拿走所有权
     let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sysloop)?;
-
+    // 配置wifi
     wifi.set_configuration(&esp_idf_svc::wifi::Configuration::Client(
         esp_idf_svc::wifi::ClientConfiguration {
             ssid: ssid
@@ -36,21 +37,21 @@ pub fn wifi(
             ..Default::default()
         },
     ))?;
-
+    // 启动wifi
     wifi.start()?;
 
     info!("Connecting wifi...");
-
+    // 连接wifi
     wifi.connect()?;
 
     info!("Waiting for DHCP lease...");
-
+    // 等待dhcp
     wifi.wait_netif_up()?;
-
+    // 获取ip信息
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
 
     info!("Wifi DHCP info: {:?}", ip_info);
-
+    // 封装返回esp wifi
     Ok(Box::new(esp_wifi))
 }
 

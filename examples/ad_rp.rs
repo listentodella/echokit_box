@@ -1,6 +1,5 @@
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 
-use esp_idf_svc::hal::adc::AdcChannels;
 use esp_idf_svc::hal::gpio::AnyIOPin;
 use esp_idf_svc::hal::i2s::{config, I2sDriver, I2S0, I2S1};
 use esp_idf_svc::io::Read;
